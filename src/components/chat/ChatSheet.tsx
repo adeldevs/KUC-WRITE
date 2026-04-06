@@ -17,9 +17,11 @@ interface Props {
   assignment: Assignment;
   /** The writer's UID for this conversation thread. */
   writerUid: string;
+  /** Pre-resolved other-party profile (passed from MessagesPage or Dashboard). */
+  otherParty?: WriterProfile | null;
 }
 
-export default function ChatSheet({ open, onClose, assignment, writerUid }: Props) {
+export default function ChatSheet({ open, onClose, assignment, writerUid, otherParty: otherPartyProp }: Props) {
   const { dbUser, firebaseUser } = useAuth();
   const { messages, joinRoom, sendMessage } = useSocket();
   const [input, setInput] = useState('');
@@ -32,21 +34,26 @@ export default function ChatSheet({ open, onClose, assignment, writerUid }: Prop
   // Unique room per assignment+writer pair
   const roomId = `${assignment._id}__${writerUid}`;
 
-  // The "other party" shown in the header
+  // Resolve the other party:
+  // 1. Use prop if provided (most reliable — comes from MessagesPage)
+  // 2. Fall back to extracting from writers map
+  // 3. Fall back to first non-requester sender in messages
   const writerSender = messages.find(
     (m) => m.sender.uid !== assignment.requester.uid && m.sender.uid !== 'system'
   )?.sender;
 
-  const otherParty: WriterProfile | null = isRequester
-    ? (writerSender
+  const otherParty: WriterProfile | null =
+    otherPartyProp ??
+    (isRequester
+      ? writerSender
         ? { ...writerSender, department: assignment.writers?.[writerUid]?.department ?? '' }
-        : assignment.writers?.[writerUid] ?? null)
-    : {
-        uid: assignment.requester.uid,
-        fullName: assignment.requester.fullName,
-        photoURL: assignment.requester.photoURL,
-        department: assignment.requester.department,
-      };
+        : assignment.writers?.[writerUid] ?? null
+      : {
+          uid: assignment.requester.uid,
+          fullName: assignment.requester.fullName,
+          photoURL: assignment.requester.photoURL,
+          department: assignment.requester.department,
+        });
 
   // Subscribe to Firestore chat room + register writer as participant
   useEffect(() => {
@@ -54,7 +61,7 @@ export default function ChatSheet({ open, onClose, assignment, writerUid }: Prop
     console.log('%c[ChatSheet] Joining room →', 'color: #0ea5e9; font-weight: bold;', roomId);
     joinRoom(roomId);
 
-    // If the current user is the writer — register them as participant
+    // Register writer as participant immediately when chat opens
     if (!isRequester && dbUser) {
       markChatParticipant(assignment._id, {
         uid: dbUser.uid,
@@ -94,7 +101,7 @@ export default function ChatSheet({ open, onClose, assignment, writerUid }: Prop
               : `Chat with ${assignment.requester.fullName} about ${assignment.subjectCode}`}
           </SheetDescription>
 
-          {/* Header */}
+          {/* ── Header ──────────────────────────────────────────────────────── */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-[hsl(var(--border))] bg-[hsl(var(--card))] shrink-0">
             <SheetClose asChild>
               <button className="p-2 rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]">
@@ -121,12 +128,14 @@ export default function ChatSheet({ open, onClose, assignment, writerUid }: Prop
               onClick={() => isRequester && otherParty && setShowWriterProfile(true)}
             >
               <p className="font-bold text-[hsl(var(--foreground))] leading-tight truncate">
-                {otherParty ? otherParty.fullName : isRequester ? 'Awaiting writer…' : 'Unknown'}
+                {otherParty ? otherParty.fullName : isRequester ? 'Awaiting writer…' : assignment.requester.fullName}
               </p>
               <p className="text-xs text-[hsl(var(--muted-foreground))] truncate">
                 {isRequester
-                  ? `${assignment.subjectCode} · ${assignment.title}`
-                  : `${otherParty?.department ?? ''} · ${assignment.title}`}
+                  ? otherParty?.department
+                    ? `${otherParty.department} · ${assignment.subjectCode}`
+                    : assignment.subjectCode
+                  : `${assignment.subjectCode} · ${assignment.title}`}
               </p>
             </div>
 
@@ -143,15 +152,16 @@ export default function ChatSheet({ open, onClose, assignment, writerUid }: Prop
             </Button>
           </div>
 
-          {/* Assignment strip */}
+          {/* ── Assignment strip ─────────────────────────────────────────────── */}
           <div className="px-4 py-2.5 bg-[hsl(var(--accent)/0.5)] border-b border-[hsl(var(--border))] shrink-0">
             <p className="text-xs font-semibold text-[hsl(var(--primary))]">{assignment.subjectCode}</p>
             <p className="text-xs text-[hsl(var(--muted-foreground))] truncate">
-              {assignment.totalPages} pages · Due {new Date(assignment.deadline).toLocaleDateString()}
+              {assignment.title} · {assignment.totalPages} pages · Due{' '}
+              {new Date(assignment.deadline).toLocaleDateString()}
             </p>
           </div>
 
-          {/* Messages */}
+          {/* ── Messages ─────────────────────────────────────────────────────── */}
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 gap-2">
@@ -208,7 +218,7 @@ export default function ChatSheet({ open, onClose, assignment, writerUid }: Prop
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input */}
+          {/* ── Input ────────────────────────────────────────────────────────── */}
           <div className="shrink-0 border-t border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-3 safe-bottom">
             <div className="flex items-center gap-2">
               <Input

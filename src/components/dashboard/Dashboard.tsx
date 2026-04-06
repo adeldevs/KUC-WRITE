@@ -220,6 +220,12 @@ export default function Dashboard() {
           onClose={() => setChatOpen(false)}
           assignment={activeGig}
           writerUid={dbUser?.uid ?? firebaseUser?.uid ?? ''}
+          otherParty={{
+            uid: activeGig.requester.uid,
+            fullName: activeGig.requester.fullName,
+            photoURL: activeGig.requester.photoURL,
+            department: activeGig.requester.department,
+          }}
         />
       )}
     </div>

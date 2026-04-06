@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import {
   collection, addDoc, onSnapshot, query, orderBy,
   serverTimestamp, Timestamp,
@@ -8,10 +8,13 @@ import { useAuth } from './AuthContext';
 import type { Message } from '../types';
 
 interface SocketContextValue {
-  joinRoom: (assignmentId: string) => void;
-  sendMessage: (assignmentId: string, content: string) => Promise<void>;
+  /** Subscribe to a specific chat room. Returns messages ONLY for that room. */
+  joinRoom: (roomId: string) => void;
+  sendMessage: (roomId: string, content: string) => Promise<void>;
+  /** Messages for the currently active room */
   messages: Message[];
-  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+  /** The active room ID */
+  activeRoom: string | null;
 }
 
 const SocketContext = createContext<SocketContextValue | null>(null);
@@ -19,6 +22,7 @@ const SocketContext = createContext<SocketContextValue | null>(null);
 export function SocketProvider({ children }: { children: React.ReactNode }) {
   const { dbUser, firebaseUser } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [activeRoom, setActiveRoom] = useState<string | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const currentRoomRef = useRef<string | null>(null);
 
@@ -32,10 +36,10 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const joinRoom = (assignmentId: string) => {
+  const joinRoom = useCallback((roomId: string) => {
     // Avoid re-subscribing to the same room
-    if (currentRoomRef.current === assignmentId && unsubRef.current) {
-      console.log('[Socket] Already in room', assignmentId, '— skipping re-join');
+    if (currentRoomRef.current === roomId && unsubRef.current) {
+      console.log('[Socket] Already in room', roomId, '— skipping re-join');
       return;
     }
 
@@ -46,13 +50,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       unsubRef.current = null;
     }
 
-    currentRoomRef.current = assignmentId;
+    currentRoomRef.current = roomId;
+    setActiveRoom(roomId);
     setMessages([]);
 
-    console.log('%c[Socket] 🔔 Subscribing to Firestore chat room →', 'color: #7c3aed; font-weight: bold;', assignmentId);
+    console.log('%c[Socket] 🔔 Subscribing to Firestore chat room →', 'color: #7c3aed; font-weight: bold;', roomId);
 
     const q = query(
-      collection(db, 'chats', assignmentId, 'messages'),
+      collection(db, 'chats', roomId, 'messages'),
       orderBy('createdAt', 'asc')
     );
 
@@ -79,9 +84,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         console.error('[Socket] ❌ Firestore listener error →', err);
       }
     );
-  };
+  }, []);
 
-  const sendMessage = async (assignmentId: string, content: string) => {
+  const sendMessage = useCallback(async (roomId: string, content: string) => {
     if (!firebaseUser) return;
     const uid = dbUser?.uid ?? firebaseUser.uid;
     const payload = {
@@ -93,12 +98,12 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       content,
       createdAt: serverTimestamp(),
     };
-    console.log('%c[Socket] 📤 Writing message to Firestore →', 'color: #a855f7; font-weight: bold;', { roomId: assignmentId, content });
-    await addDoc(collection(db, 'chats', assignmentId, 'messages'), payload);
-  };
+    console.log('%c[Socket] 📤 Writing message to Firestore →', 'color: #a855f7; font-weight: bold;', { roomId, content });
+    await addDoc(collection(db, 'chats', roomId, 'messages'), payload);
+  }, [dbUser, firebaseUser]);
 
   return (
-    <SocketContext.Provider value={{ joinRoom, sendMessage, messages, setMessages }}>
+    <SocketContext.Provider value={{ joinRoom, sendMessage, messages, activeRoom }}>
       {children}
     </SocketContext.Provider>
   );
